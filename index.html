@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<!-- 必须置于头部，防止中文乱码 -->
+<meta charset="UTF-8">
+<!-- 禁止手机缩放/双击放大，锁定视口 -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>无尽横版跑酷 - Endless Runner</title>
+<style>
+  /* ===== 全局重置：禁止滑动、缩放、选中 ===== */
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;                 /* 禁止页面滚动 */
+    overscroll-behavior: none;        /* 禁止过度滚动 */
+    touch-action: none;               /* 禁止手势缩放/滚动 */
+    user-select: none; -webkit-user-select: none;
+    background: #0b1020;
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    color: #fff;
+  }
+  #wrap {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(180deg,#0b1020,#1a1f3a);
+  }
+  /* 画布自动拉伸适配屏幕宽度，保持 1000:560 比例 */
+  canvas#game {
+    display: block;
+    background: #87CEEB;
+    box-shadow: 0 10px 40px rgba(0,0,0,.5);
+    border-radius: 6px;
+    touch-action: none;
+  }
+
+  /* ===== 通用覆盖层 ===== */
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 18px;
+    background: rgba(8,12,28,.72);
+    backdrop-filter: blur(3px);
+    text-align: center;
+    z-index: 10;
+  }
+  .overlay.hidden { display: none; }
+  .title { font-size: clamp(28px, 6vw, 54px); font-weight: 800; letter-spacing: 2px;
+           color: #ffe66d; text-shadow: 0 4px 0 #b9456b, 0 8px 18px rgba(0,0,0,.5); }
+  .sub { font-size: clamp(13px, 2.4vw, 18px); color: #c8d0ee; line-height: 1.6; max-width: 560px; padding: 0 14px; }
+  .hint { font-size: clamp(12px, 2.2vw, 15px); color: #8da0c8; }
+
+  /* ===== 按钮 ===== */
+  .btn {
+    border: none; cursor: pointer;
+    padding: 14px 34px;
+    font-size: clamp(16px,3vw,20px); font-weight: 700;
+    color: #1a1330;
+    background: linear-gradient(180deg,#ffe66d,#ffb347);
+    border-radius: 30px;
+    box-shadow: 0 6px 0 #c87a1e, 0 10px 18px rgba(0,0,0,.4);
+    transition: transform .08s, box-shadow .08s;
+  }
+  .btn:active { transform: translateY(4px); box-shadow: 0 2px 0 #c87a1e, 0 4px 10px rgba(0,0,0,.4); }
+  .btn.sec { background: linear-gradient(180deg,#9fd3ff,#5aa0e6); box-shadow: 0 6px 0 #2c6aa3, 0 10px 18px rgba(0,0,0,.4); }
+  .btn.sec:active { box-shadow: 0 2px 0 #2c6aa3, 0 4px 10px rgba(0,0,0,.4); }
+
+  /* ===== HUD ===== */
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0;
+    display: flex; align-items: flex-start; justify-content: space-between;
+    padding: 10px 14px;
+    z-index: 5;
+    pointer-events: none;
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0,0,0,.6);
+  }
+  #hud .box { background: rgba(10,15,35,.45); padding: 6px 12px; border-radius: 12px;
+              border: 1px solid rgba(255,255,255,.12); }
+  #scoreBox { font-size: clamp(16px,3vw,22px); }
+  #scoreBox small { color:#9fb0d8; font-weight:600; font-size:.7em; display:block; }
+  #highBox { font-size: clamp(13px,2.4vw,16px); color:#ffe66d; }
+  #livesBox { font-size: clamp(20px,4vw,26px); color:#ff5d73; letter-spacing:2px; }
+  #pauseBtn {
+    pointer-events: auto; cursor: pointer;
+    width: 42px; height: 42px; border-radius: 50%;
+    background: rgba(10,15,35,.55); border: 1px solid rgba(255,255,255,.2);
+    color:#fff; font-size: 20px; display:flex; align-items:center; justify-content:center;
+  }
+  #pauseBtn:active { background: rgba(40,50,90,.7); }
+
+  /* 结算弹窗小标题 */
+  .go-title { font-size: clamp(26px,5vw,44px); font-weight:800; color:#ff5d73;
+              text-shadow:0 4px 0 #7a1f2e, 0 8px 18px rgba(0,0,0,.5); }
+  .go-score { font-size: clamp(18px,3.4vw,26px); color:#fff; }
+  .go-high { font-size: clamp(14px,2.6vw,18px); color:#ffe66d; }
+  .newrec { color:#7fffd4; font-weight:800; }
+  .btn-row { display:flex; gap:14px; flex-wrap:wrap; justify-content:center; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="1000" height="560"></canvas>
+
+  <!-- HUD：分数 / 最高分 / 生命 / 暂停 -->
+  <div id="hud" class="hidden">
+    <div id="scoreBox" class="box"><span id="score">0</span><small>当前分数</small></div>
+    <div id="highBox" class="box">最高 <span id="high">0</span></div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <div id="livesBox" class="box">♥♥♥</div>
+      <div id="pauseBtn" title="暂停">❚❚</div>
+    </div>
+  </div>
+
+  <!-- 主菜单 -->
+  <div id="menu" class="overlay">
+    <div class="title">无尽跑酷</div>
+    <div class="sub">
+      3 条横向轨道，角色自动向右奔跑。<br>
+      躲避尖刺、跳上平台、收集金币，挑战最高分！
+    </div>
+    <div class="sub" style="color:#9fd3ff;">
+      ▸ PC：空格/↑ 跳跃 &nbsp;|&nbsp; W/S 或 ←/→ 切换轨道 &nbsp;|&nbsp; P 暂停<br>
+      ▸ 手机：点击屏幕跳跃 &nbsp;|&nbsp; 上滑去上面跑道 &nbsp;|&nbsp; 下滑去下面跑道
+    </div>
+    <button class="btn" id="playBtn">开始游戏</button>
+    <div class="hint">提示：最顶/最底轨道无法继续同向滑动 · 不支持二段跳</div>
+  </div>
+
+  <!-- 暂停弹窗 -->
+  <div id="pause" class="overlay hidden">
+    <div class="title">已暂停</div>
+    <div class="btn-row">
+      <button class="btn" id="resumeBtn">继续</button>
+      <button class="btn sec" id="pauseRestartBtn">重新开始</button>
+    </div>
+  </div>
+
+  <!-- 游戏结束结算弹窗 -->
+  <div id="gameover" class="overlay hidden">
+    <div class="go-title">游戏结束</div>
+    <div class="go-score">本局得分：<span id="finalScore">0</span></div>
+    <div class="go-high">最高记录：<span id="finalHigh">0</span> <span id="newRec" class="newrec hidden">新纪录！</span></div>
+    <div class="btn-row">
+      <button class="btn" id="restartBtn">重新开始</button>
+      <button class="btn sec" id="menuBtn">主菜单</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+ *  无尽横版跑酷游戏 —— 单文件实现
+ *  - HTML5 Canvas + 原生 JavaScript
+ *  - 3 条横向轨道（顶/中/底），角色自动向右奔跑
+ *  - 重力跳跃、轨道切换、尖刺/平台/金币、生命值、难度递增、localStorage 最高分
+ *  - Web Audio API 合成音效，requestAnimationFrame 60帧渲染
+ * ======================================================================= */
+
+// ===== 画布与上下文 =====
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const GAME_W = 1000, GAME_H = 560;     // 逻辑分辨率（绘制坐标系）
+
+// ===== 游戏常量 =====
+const LANE_Y = [210, 340, 470];       // 三条轨道的地面线 Y（顶/中/底）
+const LANE_COUNT = 3;
+const PLAYER_X = 170;                  // 玩家固定 X
+const PLAYER_W = 40, PLAYER_H = 54;    // 玩家尺寸
+const GRAVITY = 2500;                  // 重力 px/s^2
+const JUMP_V = 950;                    // 跳跃初速度（向上）→ 跳高约 180px
+const LANE_SWITCH_TIME = 0.13;         // 轨道切换补间时长（秒）
+const BASE_SPEED = 320;                // 初始滚动速度 px/s
+const SPEED_MAX = 720;                 // 最大滚动速度
+const COIN_VALUE = 25;                 // 每金币得分
+const INVINCIBLE_TIME = 1.2;           // 受伤后无敌时间（秒）
+const SAFE_LANES_KEY = 'runner_high_v1';// localStorage 键
+
+// ===== 工具函数 =====
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = n => Math.floor(Math.random() * n);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const easeOut = t => 1 - (1 - t) * (1 - t);
+// 按轨道索引插值得到地面 Y（用于轨道切换补间）
+function laneYat(v) {
+  v = clamp(v, 0, LANE_COUNT - 1);
+  const i = Math.floor(v);
+  if (i >= LANE_COUNT - 1) return LANE_Y[LANE_COUNT - 1];
+  return lerp(LANE_Y[i], LANE_Y[i + 1], v - i);
+}
+// X 轴方向 AABB 重叠
+function overlapX(ax, aw, bx, bw) { return ax < bx + bw && bx < ax + aw; }
+
+// ===== 音频引擎：Web Audio API 合成，无外部文件 =====
+let actx = null;
+function audioCtx() {
+  if (!actx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) actx = new AC();
+  }
+  // 浏览器自动播放策略：需用户手势后恢复
+  if (actx && actx.state === 'suspended') actx.resume();
+  return actx;
+}
+// 通用音符：freq 频率，start 相对开始时间，dur 时长
+function tone(freq, start, dur, type = 'sine', vol = 0.2, slideTo = null) {
+  const ac = audioCtx(); if (!ac) return;
+  const t0 = ac.currentTime + start;
+  const o = ac.createOscillator();
+  const g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t0);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+  g.gain.setValueAtTime(vol, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g); g.connect(ac.destination);
+  o.start(t0); o.stop(t0 + dur + 0.02);
+}
+const SFX = {
+  jump: () => { tone(420, 0, 0.16, 'square', 0.16, 760); },
+  coin: () => { tone(880, 0, 0.08, 'sine', 0.18); tone(1320, 0.06, 0.10, 'sine', 0.18); },
+  hurt: () => { tone(220, 0, 0.22, 'sawtooth', 0.22, 80); },
+  switch: () => { tone(540, 0, 0.06, 'triangle', 0.10); },
+  over: () => { tone(330, 0, 0.20, 'square', 0.20, 110); tone(160, 0.18, 0.50, 'square', 0.22, 80); }
+};
+
+// ===== 游戏状态 =====
+let state = 'menu';   // menu | playing | paused | gameover
+let score = 0, distance = 0, lives = 3;
+let highScore = parseInt(localStorage.getItem(SAFE_LANES_KEY) || '0', 10) || 0;
+let entities = [];     // 障碍/金币/平台 列表
+let spawnDist = 0;     // 距离累计，到阈值生成新一波
+let bgOffset = 0;      // 背景视差偏移
+let lastTime = 0;
+let cameraShake = 0;   // 受伤屏幕震动
+
+// ===== 玩家对象 =====
+const player = {
+  lane: 1,             // 当前目标轨道（整数）
+  laneVis: 1,          // 视觉轨道位置（浮点，补间用）
+  laneSwitchFrom: 1,   // 切换起始轨道
+  laneSwitchT: -1,     // 切换进度（>=0 进行中，-1 闲置）
+  feetY: LANE_Y[1],    // 脚部绝对 Y
+  prevFeetY: LANE_Y[1],
+  vy: 0,               // 垂直速度
+  grounded: true,      // 是否着地
+  onPlatform: null,    // 当前站立的平台实体
+  invincible: 0,       // 无敌剩余秒数
+  runTime: 0,          // 跑步动画相位
+  tilt: 0              // 切换倾斜（视觉）
+};
+function resetPlayer() {
+  player.lane = 1; player.laneVis = 1; player.laneSwitchFrom = 1; player.laneSwitchT = -1;
+  player.feetY = LANE_Y[1]; player.prevFeetY = LANE_Y[1];
+  player.vy = 0; player.grounded = true; player.onPlatform = null;
+  player.invincible = 0; player.runTime = 0; player.tilt = 0;
+}
+
+// 当前速度（随分数递增）
+function curSpeed() {
+  return Math.min(SPEED_MAX, BASE_SPEED + score * 0.55);
+}
+
+// ===== 输入处理 =====
+// 键盘
+window.addEventListener('keydown', (e) => {
+  // 首次交互恢复音频
+  audioCtx();
+  const k = e.key;
+  if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) e.preventDefault();
+  switch (k) {
+    // 空格 / ↑：跳跃（W 不再跳跃）
+    case ' ': case 'ArrowUp':
+      if (state === 'menu') startGame();
+      else if (state === 'gameover') startGame();
+      else if (state === 'playing') doJump();
+      break;
+    // W / A / ←：向上一条轨道（lane 索引减 1）
+    case 'w': case 'W': case 'ArrowLeft': case 'a': case 'A':
+      if (state === 'playing') switchLane(-1);
+      break;
+    // S / D / →：向下一个轨道（lane 索引加 1）
+    case 's': case 'S': case 'ArrowRight': case 'd': case 'D':
+      if (state === 'playing') switchLane(1);
+      break;
+    case 'p': case 'P': case 'Escape':
+      togglePause();
+      break;
+    case 'Enter':
+      if (state === 'menu' || state === 'gameover') startGame();
+      break;
+  }
+}, { passive: false });
+
+// 触摸：支持点击跳跃 + 上下滑动切换轨道（上滑=上面跑道，下滑=下面跑道）
+let touch = { id: null, sx: 0, sy: 0, st: 0, moved: false, swipeDone: false };
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  audioCtx();
+  if (state !== 'playing') return;   // 菜单/结算用按钮交互
+  if (touch.id !== null) return;
+  const t = e.changedTouches[0];
+  touch.id = t.identifier; touch.sx = t.clientX; touch.sy = t.clientY;
+  touch.st = Date.now(); touch.moved = false; touch.swipeDone = false;
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();                 // 阻止页面滚动
+  if (touch.id === null) return;
+  // 找到对应触摸点
+  let t = null;
+  for (const ct of e.changedTouches) if (ct.identifier === touch.id) { t = ct; break; }
+  if (!t) return;
+  const dx = t.clientX - touch.sx;
+  const dy = t.clientY - touch.sy;
+  if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) touch.moved = true;
+  // 上下滑动达到阈值：立即切换轨道（仅触发一次）
+  // dy<0 → 手指上滑 → 去上面跑道（lane-1）；dy>0 → 手指下滑 → 去下面跑道（lane+1）
+  if (!touch.swipeDone && touch.moved && Math.abs(dy) > 30) {
+    switchLane(dy < 0 ? -1 : 1);
+    touch.swipeDone = true;
+  }
+}, { passive: false });
+
+function onTouchEnd(e) {
+  if (touch.id === null) return;
+  let t = null;
+  for (const ct of e.changedTouches) if (ct.identifier === touch.id) { t = ct; break; }
+  touch.id = null;
+  if (!t) return;
+  const dx = t.clientX - touch.sx, dy = t.clientY - touch.sy;
+  const dt = Date.now() - touch.st;
+  // 未发生滑动 + 移动很小 + 时长短 → 视为点击跳跃
+  if (!touch.swipeDone && Math.abs(dx) < 24 && Math.abs(dy) < 24 && dt < 350) {
+    doJump();
+  }
+}
+canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
+
+// 鼠标点击（PC 上点击画布也可跳跃，便于触屏笔记本）
+canvas.addEventListener('mousedown', (e) => {
+  if (state === 'playing') { audioCtx(); doJump(); }
+});
+
+// ===== 动作 =====
+function doJump() {
+  // 着地方可跳跃；切换过程中也允许（取消贴地）→ 仅一段跳，不支持二段跳
+  if (state !== 'playing' || !player.grounded) return;
+  player.vy = -JUMP_V;
+  player.grounded = false;
+  player.onPlatform = null;
+  SFX.jump();
+}
+
+function switchLane(dir) {
+  if (state !== 'playing') return;
+  if (player.laneSwitchT >= 0) return;   // 切换中不可再次切换
+  const target = clamp(player.lane + dir, 0, LANE_COUNT - 1);
+  if (target === player.lane) return;    // 已到边界
+  player.laneSwitchFrom = player.lane;
+  player.lane = target;
+  player.laneSwitchT = 0;
+  player.tilt = dir;                    // 视觉倾斜
+  // 若站在平台上切换轨道 → 离开平台进入空中，自然下落到新轨道
+  if (player.onPlatform) { player.onPlatform = null; player.grounded = false; player.vy = 0; }
+  SFX.switch();
+}
+
+// 当前参与碰撞的轨道集合（含切换时的起点轨道，避免漏判）
+function collisionLanes() {
+  const s = new Set();
+  s.add(Math.round(player.laneVis));
+  if (player.laneSwitchT >= 0) s.add(player.laneSwitchFrom);
+  return s;
+}
+
+// ===== 实体生成 =====
+function addSpike(lane, x) {
+  entities.push({ type: 'spike', lane, x, w: 34, h: 26 });
+}
+function addCoin(lane, x, yOff) {
+  entities.push({ type: 'coin', lane, x, yOff: yOff == null ? 32 : yOff, w: 22, h: 22, spin: Math.random() * 6 });
+}
+function addPlatform(lane, x, w, h) {
+  entities.push({ type: 'platform', lane, x, w, h });
+}
+
+// 生成一波实体，保证可解（不堵死三条轨道）
+function spawnWave() {
+  const r = Math.random();
+  const baseX = GAME_W + 40;
+  if (r < 0.28) {
+    // 单个尖刺
+    addSpike(randInt(LANE_COUNT), baseX);
+  } else if (r < 0.46) {
+    // 双尖刺：随机两条轨道，留一条安全
+    const lanes = [0, 1, 2].sort(() => Math.random() - 0.5);
+    addSpike(lanes[0], baseX);
+    addSpike(lanes[1], baseX + 70);
+  } else if (r < 0.66) {
+    // 金币直线
+    const lane = randInt(LANE_COUNT);
+    for (let i = 0; i < 5; i++) addCoin(lane, baseX + i * 36, 32);
+  } else if (r < 0.80) {
+    // 金币抛物线（需跳跃收集）
+    const lane = randInt(LANE_COUNT);
+    for (let i = 0; i < 6; i++) {
+      const t = i / 5;
+      addCoin(lane, baseX + i * 30, 32 + Math.sin(t * Math.PI) * 70);
+    }
+  } else if (r < 0.92) {
+    // 平台：可跳上去或跳过，或切换轨道绕过
+    const lane = randInt(LANE_COUNT);
+    addPlatform(lane, baseX, rand(60, 110) | 0, rand(40, 70) | 0);
+    // 平台上方放金币奖励
+    for (let i = 0; i < 3; i++) addCoin(lane, baseX + 18 + i * 30, 70);
+  } else {
+    // 尖刺 + 上方金币（跳过去吃）
+    const lane = randInt(LANE_COUNT);
+    addSpike(lane, baseX);
+    addCoin(lane, baseX + 6, 100);
+    addCoin(lane, baseX + 40, 100);
+  }
+}
+
+// ===== 生命与游戏结束 =====
+function loseLife() {
+  if (player.invincible > 0) return;
+  lives--;
+  player.invincible = INVINCIBLE_TIME;
+  player.vy = -360;            // 受伤小反弹
+  player.grounded = false;
+  player.onPlatform = null;
+  cameraShake = 0.35;
+  SFX.hurt();
+  updateHUD();
+  if (lives <= 0) gameOver();
+}
+
+function gameOver() {
+  state = 'gameover';
+  SFX.over();
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem(SAFE_LANES_KEY, String(highScore));
+    document.getElementById('newRec').classList.remove('hidden');
+  } else {
+    document.getElementById('newRec').classList.add('hidden');
+  }
+  document.getElementById('finalScore').textContent = score;
+  document.getElementById('finalHigh').textContent = highScore;
+  document.getElementById('gameover').classList.remove('hidden');
+  document.getElementById('hud').classList.add('hidden');
+}
+
+// ===== 主循环更新 =====
+function update(dt) {
+  const speed = curSpeed();
+  // 距离与分数
+  distance += speed * dt;
+  score = Math.floor(distance / 18);
+  bgOffset += speed * dt * 0.2;
+
+  // 玩家：轨道切换补间
+  if (player.laneSwitchT >= 0) {
+    player.laneSwitchT += dt / LANE_SWITCH_TIME;
+    if (player.laneSwitchT >= 1) {
+      player.laneSwitchT = -1;
+      player.laneVis = player.lane;
+      player.tilt = 0;
+    } else {
+      player.laneVis = lerp(player.laneSwitchFrom, player.lane, easeOut(player.laneSwitchT));
+    }
+  } else {
+    player.laneVis = player.lane;
+  }
+  const groundY = laneYat(player.laneVis);
+
+  // 跑步动画相位
+  player.runTime += dt * (8 + speed * 0.012);
+
+  // 无敌计时
+  if (player.invincible > 0) player.invincible -= dt;
+  if (cameraShake > 0) cameraShake -= dt;
+
+  // 重力 / 垂直运动
+  player.prevFeetY = player.feetY;
+  if (!player.grounded) {
+    player.vy += GRAVITY * dt;
+    player.feetY += player.vy * dt;
+  } else if (player.onPlatform) {
+    // 站在平台上：跟随平台顶部；若平台已滑离脚下则掉落
+    const p = player.onPlatform;
+    const under = p.x + p.w > PLAYER_X + 6 && p.x < PLAYER_X + PLAYER_W - 6 && !p.dead;
+    if (under) {
+      player.feetY = LANE_Y[p.lane] - p.h;
+    } else {
+      player.grounded = false; player.onPlatform = null; player.vy = 0;
+    }
+  } else {
+    // 贴地：随轨道切换平滑滑动
+    player.feetY = groundY;
+  }
+
+  // 实体滚动
+  for (const e of entities) e.x -= speed * dt;
+  // 清理离屏实体
+  entities = entities.filter(e => e.x + e.w > -60 && !e.dead);
+
+  // 生成新一波（按距离间隔，保持空间密度）
+  spawnDist -= speed * dt;
+  if (spawnDist <= 0) {
+    spawnWave();
+    // 速度越快，间隔适当缩短但保持可解
+    spawnDist = rand(230, 360) * (BASE_SPEED / speed) + 60;
+  }
+
+  // ===== 碰撞检测 =====
+  const lanes = collisionLanes();
+  const pRect = { x: PLAYER_X, y: player.feetY - PLAYER_H, w: PLAYER_W, h: PLAYER_H };
+
+  // 平台：先判定落地（从上方落下），再判定侧面撞击
+  if (!player.grounded && player.vy > 0) {
+    for (const e of entities) {
+      if (e.type !== 'platform' || !lanes.has(e.lane)) continue;
+      const top = LANE_Y[e.lane] - e.h;
+      if (player.prevFeetY <= top + 2 && player.feetY >= top &&
+          overlapX(pRect.x, pRect.w, e.x, e.w)) {
+        player.feetY = top; player.vy = 0; player.grounded = true;
+        player.onPlatform = e;
+        break;
+      }
+    }
+  }
+  // 平台侧面撞击 / 尖刺 / 金币
+  for (const e of entities) {
+    if (e.dead) continue;
+    if (!lanes.has(e.lane)) continue;          // 仅判定当前轨道相关实体
+    if (e.type === 'platform') {
+      if (player.onPlatform === e) continue;   // 正站其上
+      const eRect = { x: e.x, y: LANE_Y[e.lane] - e.h, w: e.w, h: e.h };
+      if (aabb(pRect, eRect)) loseLife();
+    } else if (e.type === 'spike') {
+      const eRect = { x: e.x + 4, y: LANE_Y[e.lane] - e.h, w: e.w - 8, h: e.h };
+      if (aabb(pRect, eRect)) loseLife();
+    } else if (e.type === 'coin') {
+      const eRect = { x: e.x, y: LANE_Y[e.lane] - e.yOff - e.h, w: e.w, h: e.h };
+      if (aabb(pRect, eRect)) {
+        e.dead = true;
+        score += COIN_VALUE;
+        distance += COIN_VALUE * 18; // 让分数与距离同步增长
+        SFX.coin();
+        updateHUD();
+      }
+    }
+  }
+
+  // 通用着地（落到当前轨道地面）
+  if (!player.grounded && !player.onPlatform && player.feetY >= groundY) {
+    player.feetY = groundY; player.vy = 0; player.grounded = true;
+  }
+  // 防止意外掉出画面
+  if (player.feetY > LANE_Y[LANE_COUNT - 1]) {
+    player.feetY = LANE_Y[LANE_COUNT - 1]; player.vy = 0; player.grounded = true;
+  }
+}
+
+function aabb(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// ===== 渲染 =====
+function drawBackground() {
+  // 天空渐变
+  const sky = ctx.createLinearGradient(0, 0, 0, GAME_H);
+  sky.addColorStop(0, '#5db7ff');
+  sky.addColorStop(0.6, '#9fd8ff');
+  sky.addColorStop(1, '#dff3ff');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+  // 太阳
+  ctx.fillStyle = 'rgba(255,240,160,0.9)';
+  ctx.beginPath(); ctx.arc(GAME_W - 120, 90, 38, 0, Math.PI * 2); ctx.fill();
+
+  // 远山视差
+  ctx.fillStyle = '#7fb0c4';
+  drawHills(bgOffset * 0.3, 230, 90, 320);
+  // 近山视差
+  ctx.fillStyle = '#5e94a8';
+  drawHills(bgOffset * 0.55, 300, 70, 260);
+
+  // 云朵视差
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  drawClouds(bgOffset * 0.2);
+}
+
+function drawHills(offset, baseY, amp, step) {
+  ctx.beginPath();
+  ctx.moveTo(0, GAME_H);
+  const off = offset % step;
+  for (let x = -off - step; x <= GAME_W + step; x += step) {
+    ctx.lineTo(x, baseY);
+    ctx.quadraticCurveTo(x + step / 2, baseY - amp, x + step, baseY);
+  }
+  ctx.lineTo(GAME_W, GAME_H); ctx.closePath(); ctx.fill();
+}
+
+function drawClouds(offset) {
+  const step = 280;
+  const off = offset % step;
+  for (let x = -off - step; x < GAME_W + step; x += step) {
+    cloud(x, 70 + ((x / step) % 3) * 40, 26);
+  }
+}
+function cloud(x, y, r) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.arc(x + r, y + 4, r * 0.8, 0, Math.PI * 2);
+  ctx.arc(x - r, y + 6, r * 0.7, 0, Math.PI * 2);
+  ctx.arc(x + r * 0.4, y - r * 0.7, r * 0.7, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawLanes() {
+  // 三条轨道带 + 地面线
+  for (let i = 0; i < LANE_COUNT; i++) {
+    const y = LANE_Y[i];
+    // 轨道带底色
+    const top = y - 70;
+    ctx.fillStyle = i % 2 ? '#6bbf59' : '#5fae4f';
+    ctx.fillRect(0, top, GAME_W, 70 + (i === LANE_COUNT - 1 ? (GAME_H - y) : 0));
+    // 地面线
+    ctx.fillStyle = 'rgba(40,80,30,0.6)';
+    ctx.fillRect(0, y, GAME_W, 4);
+    // 跑道虚线
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 2; ctx.setLineDash([18, 18]);
+    ctx.beginPath(); ctx.moveTo(0, y - 35); ctx.lineTo(GAME_W, y - 35); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // 轨道分隔斜线纹理（增强纵深感）
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  ctx.lineWidth = 1;
+  const off = bgOffset % 80;
+  for (let x = -off; x < GAME_W; x += 80) {
+    for (let i = 0; i < LANE_COUNT - 1; i++) {
+      ctx.beginPath();
+      ctx.moveTo(x, LANE_Y[i]);
+      ctx.lineTo(x + 30, LANE_Y[i + 1] - 70);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawEntities() {
+  for (const e of entities) {
+    if (e.type === 'spike') drawSpike(e);
+    else if (e.type === 'coin') drawCoin(e);
+    else if (e.type === 'platform') drawPlatform(e);
+  }
+}
+
+function drawSpike(e) {
+  const baseY = LANE_Y[e.lane];
+  const x = e.x, w = e.w, h = e.h;
+  ctx.fillStyle = '#c0392b';
+  ctx.strokeStyle = '#7a1f15';
+  ctx.lineWidth = 2;
+  // 三齿尖刺
+  const teeth = 3, tw = w / teeth;
+  for (let i = 0; i < teeth; i++) {
+    ctx.beginPath();
+    ctx.moveTo(x + i * tw, baseY);
+    ctx.lineTo(x + i * tw + tw / 2, baseY - h);
+    ctx.lineTo(x + (i + 1) * tw, baseY);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }
+  // 底座
+  ctx.fillStyle = '#5a2a22';
+  ctx.fillRect(x - 2, baseY - 4, w + 4, 6);
+}
+
+function drawCoin(e) {
+  const cy = LANE_Y[e.lane] - e.yOff - e.h / 2;
+  const cx = e.x + e.w / 2;
+  e.spin = (e.spin || 0) + 0.18;
+  const sx = Math.abs(Math.cos(e.spin));   // 旋转：横向缩放
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(Math.max(0.18, sx), 1);
+  // 外圈
+  ctx.fillStyle = '#ffcf33';
+  ctx.beginPath(); ctx.arc(0, 0, e.w / 2, 0, Math.PI * 2); ctx.fill();
+  // 内圈
+  ctx.fillStyle = '#fff3a0';
+  ctx.beginPath(); ctx.arc(0, 0, e.w / 2 - 4, 0, Math.PI * 2); ctx.fill();
+  // 中心符号
+  ctx.fillStyle = '#c8881a';
+  ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('$', 0, 1);
+  ctx.restore();
+}
+
+function drawPlatform(e) {
+  const top = LANE_Y[e.lane] - e.h;
+  // 主体
+  ctx.fillStyle = '#8c5a32';
+  ctx.fillRect(e.x, top, e.w, e.h);
+  // 顶部草地
+  ctx.fillStyle = '#6bbf59';
+  ctx.fillRect(e.x, top, e.w, 8);
+  // 描边
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(e.x + 1, top + 1, e.w - 2, e.h - 2);
+  // 砖纹
+  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+  for (let i = 12; i < e.h; i += 14) {
+    ctx.beginPath(); ctx.moveTo(e.x, top + i); ctx.lineTo(e.x + e.w, top + i); ctx.stroke();
+  }
+}
+
+function drawPlayer() {
+  const px = PLAYER_X;
+  const py = player.feetY - PLAYER_H;   // 顶部
+  // 无敌闪烁
+  if (player.invincible > 0 && Math.floor(player.invincible * 12) % 2 === 0) return;
+
+  ctx.save();
+  ctx.translate(px + PLAYER_W / 2, player.feetY);
+  ctx.rotate(player.tilt * 0.12 * (player.laneSwitchT >= 0 ? 1 : 0));
+  ctx.translate(-(PLAYER_W / 2), -PLAYER_H);
+
+  const w = PLAYER_W, h = PLAYER_H;
+  // 影子
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.beginPath(); ctx.ellipse(w / 2, h + 2, w * 0.5, 5, 0, 0, Math.PI * 2); ctx.fill();
+
+  // 腿（跑步动画：落地时摆动，空中收起）
+  const legSwing = player.grounded ? Math.sin(player.runTime) * 8 : 4;
+  ctx.strokeStyle = '#2b3a67'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(w * 0.38, h - 12); ctx.lineTo(w * 0.38 + legSwing, h);
+  ctx.moveTo(w * 0.62, h - 12); ctx.lineTo(w * 0.62 - legSwing, h);
+  ctx.stroke();
+
+  // 身体
+  ctx.fillStyle = '#3b6fe0';
+  roundRect(2, 10, w - 4, h - 22, 8); ctx.fill();
+  ctx.strokeStyle = '#214a9c'; ctx.lineWidth = 2; ctx.stroke();
+
+  // 手臂（摆动）
+  const armSwing = player.grounded ? Math.sin(player.runTime + Math.PI) * 6 : 0;
+  ctx.beginPath();
+  ctx.moveTo(w * 0.2, 16); ctx.lineTo(w * 0.2 + armSwing, 28);
+  ctx.moveTo(w * 0.8, 16); ctx.lineTo(w * 0.8 - armSwing, 28);
+  ctx.stroke();
+
+  // 头
+  ctx.fillStyle = '#ffd9a0';
+  ctx.beginPath(); ctx.arc(w / 2, 8, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#c89060'; ctx.stroke();
+  // 眼
+  ctx.fillStyle = '#1a1a2a';
+  ctx.beginPath(); ctx.arc(w / 2 + 3, 8, 1.6, 0, Math.PI * 2); ctx.fill();
+  // 帽子
+  ctx.fillStyle = '#e04545';
+  ctx.beginPath(); ctx.arc(w / 2, 4, 8, Math.PI, 0); ctx.fill();
+  ctx.fillRect(w / 2 - 9, 3, 18, 3);
+
+  ctx.restore();
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawHUD() {
+  // HUD 通过 DOM 更新，这里画轨道指示器
+  const cx = 60, cy = GAME_H - 36;
+  ctx.fillStyle = 'rgba(10,15,35,0.4)';
+  roundRect(cx - 14, cy - 38, 28, 76, 10); ctx.fill();
+  for (let i = 0; i < LANE_COUNT; i++) {
+    const y = cy - i * 20;
+    ctx.fillStyle = (Math.round(player.laneVis) === i) ? '#ffe66d' : 'rgba(255,255,255,0.4)';
+    ctx.beginPath(); ctx.arc(cx, y, 5, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function render() {
+  // 屏幕震动
+  let sx = 0, sy = 0;
+  if (cameraShake > 0) {
+    const m = cameraShake * 12;
+    sx = (Math.random() - 0.5) * m;
+    sy = (Math.random() - 0.5) * m;
+  }
+  ctx.save();
+  ctx.translate(sx, sy);
+  drawBackground();
+  drawLanes();
+  drawEntities();
+  drawPlayer();
+  drawHUD();
+  ctx.restore();
+}
+
+// ===== HUD 更新 =====
+function updateHUD() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('high').textContent = Math.max(highScore, score);
+  let hearts = '';
+  for (let i = 0; i < 3; i++) hearts += i < lives ? '♥' : '♡';
+  document.getElementById('livesBox').textContent = hearts;
+}
+
+// ===== 游戏流程控制 =====
+function startGame() {
+  audioCtx();
+  score = 0; distance = 0; lives = 3;
+  entities = []; spawnDist = 0;
+  resetPlayer();
+  state = 'playing';
+  document.getElementById('menu').classList.add('hidden');
+  document.getElementById('pause').classList.add('hidden');
+  document.getElementById('gameover').classList.add('hidden');
+  document.getElementById('hud').classList.remove('hidden');
+  updateHUD();
+}
+
+function togglePause() {
+  if (state === 'playing') {
+    state = 'paused';
+    document.getElementById('pause').classList.remove('hidden');
+  } else if (state === 'paused') {
+    state = 'playing';
+    document.getElementById('pause').classList.add('hidden');
+    lastTime = performance.now();   // 避免恢复时大 dt
+  }
+}
+
+function backToMenu() {
+  state = 'menu';
+  document.getElementById('gameover').classList.add('hidden');
+  document.getElementById('pause').classList.add('hidden');
+  document.getElementById('hud').classList.add('hidden');
+  document.getElementById('menu').classList.remove('hidden');
+}
+
+// 按钮绑定
+document.getElementById('playBtn').addEventListener('click', startGame);
+document.getElementById('restartBtn').addEventListener('click', startGame);
+document.getElementById('pauseRestartBtn').addEventListener('click', startGame);
+document.getElementById('resumeBtn').addEventListener('click', togglePause);
+document.getElementById('pauseBtn').addEventListener('click', togglePause);
+document.getElementById('menuBtn').addEventListener('click', backToMenu);
+
+// 切换标签页：自动暂停，避免大 dt 造成卡死
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && state === 'playing') togglePause();
+  lastTime = performance.now();
+});
+
+// ===== 画布自适应（保持比例 + HiDPI 清晰） =====
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const availW = window.innerWidth;
+  const availH = window.innerHeight;
+  let w = availW, h = w * GAME_H / GAME_W;
+  if (h > availH) { h = availH; w = h * GAME_W / GAME_H; }
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  canvas.width = Math.round(GAME_W * dpr);
+  canvas.height = Math.round(GAME_H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // 在逻辑坐标系绘制
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ===== 主循环：requestAnimationFrame，dt 限幅防卡死 =====
+function loop(now) {
+  let dt = (now - lastTime) / 1000;
+  lastTime = now;
+  if (dt > 0.05) dt = 0.05;     // 限幅，切后台或卡顿时避免大步进
+  if (dt < 0) dt = 0;
+
+  if (state === 'playing') {
+    update(dt);
+    updateHUD();
+  }
+  // 菜单/暂停/结束时仍渲染当前画面（菜单时渲染一个静态预览）
+  render();
+  requestAnimationFrame(loop);
+}
+
+// 初始化
+updateHUD();
+document.getElementById('high').textContent = highScore;
+lastTime = performance.now();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
